@@ -1,0 +1,39 @@
+{
+    "tasks": [
+        {
+            "type": "cppbuild",
+            "label": "C/C++: g++ build with OpenGL",
+            "command": "g++",  // use "g++" if you're on Windows and not WSL
+            "args": [
+                "-Iinclude",
+                "-fdiagnostics-color=always",
+                "-g",
+                "${file}",
+                "-IC:/libs/glew/include",
+                "-IC:/libs/glfw/include",
+                "-IC:/libs/glm",
+                "-Llib",
+                "-LC:/libs/glew/lib/Release/x64",
+                "-LC:/libs/glfw/lib-mingw",
+                "-lglew32",
+                "-lglfw3",
+                "-lopengl32",
+                "-lgdi32",
+                "-o",
+                "${fileDirname}/${fileBasenameNoExtension}"
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "Build with OpenGL"
+        }
+    ],
+    "version": "2.0.0"
+}
