@@ -1,0 +1,16 @@
+const char* getVertexShaderSource()
+{
+    // Insert Shaders here ...
+    // For now, you use a string for your shader code, in the assignment, shaders will be stored in .glsl files
+
+    return
+                "#version 330 core\n"
+                "layout (location = 0) in vec3 aPos;"
+                "layout (location = 1) in vec3 aColor;"
+                "out vec3 vertexColor;"
+                "void main()"
+                "{"
+                "   vertexColor = aColor;"
+                "   gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);"
+                "}";
+}

@@ -17,6 +17,7 @@
                 "-LC:/libs/glfw/lib-mingw",
                 "-lglew32",
                 "-lglfw3",
+                "-lassimp",
                 "-lopengl32",
                 "-lgdi32",
                 "-o",

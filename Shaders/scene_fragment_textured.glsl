@@ -1,71 +1,116 @@
 #version 330 core
 
-out vec4 FragColor;
+in VS_OUT {
+    vec3 FragPos;
+    vec3 Normal;
+    vec2 Tex;
+    vec4 FragPosLightSpace;
+} fs_in;
 
-in vec3 FragPos;
-in vec3 Normal;
-in vec2 TexCoord;
-in vec4 FragPosLightSpace;
+// ---------- textures ----------
+uniform sampler2D texture_diffuse1;  // surface base color
+uniform sampler2D shadowMap;         // sun shadow depth
 
-uniform sampler2D texture_diffuse1;
-uniform sampler2D shadowMap;
-
-uniform vec3 lightPos;
-uniform vec3 lightColor;
+// ---------- camera ----------
 uniform vec3 viewPos;
 
-// Hit flash effect
-uniform vec3 hitFlashColor = vec3(1.0, 0.0, 0.0);
-uniform float hitFlashStrength = 0.0;
+// ---------- sun (directional-ish) ----------
+uniform vec3 lightPos;   // you animate this around the origin
+uniform vec3 lightColor; // e.g., white-ish
 
-float ShadowCalculation(vec4 fragPosLightSpace)
+// ---------- snake hit flash ----------
+uniform float hitFlashStrength; // 0..1
+uniform vec3  hitFlashColor;    // usually red
+
+// ---------- fireball point lights ----------
+#define MAX_FIREBALLS 32
+uniform int  uFireballCount;
+uniform vec3 uFireballPos[MAX_FIREBALLS];
+uniform vec3 uFireballColor[MAX_FIREBALLS];
+uniform float uFireballRadius; // falloff distance scale (try 6..10)
+
+// ---------- fireball emissive toggle on the sphere itself ----------
+uniform float isFireball; // 1.0 when drawing the fireball mesh
+
+out vec4 FragColor;
+
+// ------- shadow helper (PCF) -------
+float ShadowFactor(vec4 fragPosLightSpace, vec3 N, vec3 L)
 {
+    // perspective divide
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    // to [0,1]
     projCoords = projCoords * 0.5 + 0.5;
-    
-    float closestDepth = texture(shadowMap, projCoords.xy).r;
+
+    // outside light frustum? no shadowing
+    if (projCoords.z > 1.0) return 0.0;
+
+    float bias = max(0.0005 * (1.0 - dot(N, L)), 0.0002);
     float currentDepth = projCoords.z;
-    
-    float bias = 0.005;
-    float shadow = currentDepth - bias > closestDepth ? 1.0 : 0.0;
-    
+
+    // 3x3 PCF
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    for(int x=-1; x<=1; ++x)
+    for(int y=-1; y<=1; ++y)
+    {
+        float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x,y) * texelSize).r;
+        shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
+    }
+    shadow /= 9.0;
     return shadow;
+}
+
+// ------- simple point light with quadratic falloff -------
+vec3 PointLight(vec3 lp, vec3 lc, vec3 fragPos, vec3 N)
+{
+    vec3 Lvec = lp - fragPos;
+    float d   = length(Lvec);
+    vec3 L    = Lvec / max(d, 1e-6);
+
+    float ndotl = max(dot(N, L), 0.0);
+
+    // Smooth quadratic attenuation: intensity ~ 1 / (1 + (d/r)^2)
+    // replace your attenuation line inside PointLight():
+    float r = max(uFireballRadius, 1e-3);
+    float att = 1.0 / (1.0 + pow(d / r, 4.0));  // much tighter than quadratic
+
+    return lc * ndotl * att;
 }
 
 void main()
 {
-    // DEBUG: Simple solid color to test if geometry is working
-    // Uncomment this line to see if models render as solid red
-    // FragColor = vec4(1.0, 0.0, 0.0, 1.0); return;
-    
-    vec3 color = texture(texture_diffuse1, TexCoord).rgb;
-    vec3 normal = normalize(Normal);
-    vec3 lightColorLocal = vec3(1.0);
-    
-    // Ambient
-    vec3 ambient = 0.15 * color;
-    
-    // Diffuse
-    vec3 lightDir = normalize(lightPos - FragPos);
-    float diff = max(dot(lightDir, normal), 0.0);
-    vec3 diffuse = diff * lightColorLocal;
-    
-    // Specular
-    vec3 viewDir = normalize(viewPos - FragPos);
-    vec3 reflectDir = reflect(-lightDir, normal);
-    float spec = 0.0;
-    vec3 halfwayDir = normalize(lightDir + viewDir);
-    spec = pow(max(dot(normal, halfwayDir), 0.0), 64.0);
-    vec3 specular = spec * lightColorLocal;
-    
-    // Calculate shadow
-    float shadow = ShadowCalculation(FragPosLightSpace);
-    vec3 lighting = (ambient + (1.0 - shadow) * (diffuse + specular)) * color;
-    
-    // Apply hit flash effect
-    if (hitFlashStrength > 0.0) {
-        lighting = mix(lighting, hitFlashColor, hitFlashStrength);
+    vec3 base = texture(texture_diffuse1, fs_in.Tex).rgb;
+
+    // world-space normal
+    vec3 N = normalize(fs_in.Normal);
+
+    // ---------- SUN (treated as directional) ----------
+    // We approximate sun direction from lightPos toward scene origin.
+    vec3 sunDir = normalize(-lightPos); // points from surface toward sun
+    float sunDiff = max(dot(N, sunDir), 0.0);
+
+    // shadows for sun only
+    float shadow = ShadowFactor(fs_in.FragPosLightSpace, N, sunDir);
+    vec3 sunLight = lightColor * sunDiff * (1.0 - shadow);
+
+    // ---------- FIREBALL POINT LIGHTS ----------
+    vec3 fireballLight = vec3(0.0);
+    for (int i = 0; i < uFireballCount; ++i) {
+        fireballLight += PointLight(uFireballPos[i], uFireballColor[i], fs_in.FragPos, N);
     }
-    
-    FragColor = vec4(lighting, 1.0);
+
+    // ---------- HIT FLASH overlay ----------
+    vec3 hitFlash = mix(vec3(0.0), hitFlashColor, clamp(hitFlashStrength, 0.0, 1.0));
+
+    // ---------- emissive for the fireball mesh itself ----------
+    vec3 emissive = (isFireball > 0.5)
+        ? vec3(1.0, 0.45, 0.15) * 2.0    // bright orange core
+        : vec3(0.0);
+
+    // ---------- assemble ----------
+    vec3 lighting = sunLight + fireballLight;
+    vec3 color = base * lighting + emissive + hitFlash;
+
+    FragColor = vec4(color, 1.0);
 }
